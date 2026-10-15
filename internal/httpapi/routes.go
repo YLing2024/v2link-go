@@ -22,38 +22,49 @@ type apiRoute struct {
 	pattern      string
 	method       string
 	routePath    string
+	mount        string
 	stage        routeStage
 	authRequired bool
 	builtinOnly  bool
 	handler      Handler
 }
 
+// Express 里的 Router 挂载点。OPTIONS 自动响应按挂载点边界汇总 Allow（见 serveOptions）。
+const (
+	mountHealth  = "/api/healthz"
+	mountAuth    = "/api"
+	mountClash   = "/api/clash"
+	mountLinks   = "/api/links"
+	mountAudit   = "/api/audit"
+	mountRegions = "/api/regions"
+)
+
 // routeTable 是全部 API 路由，按旧 server/src/app.ts 的挂载顺序排列；顺序即优先级。
 func (s *Server) routeTable() []apiRoute {
 	routes := []apiRoute{
 		// ① 健康检查（免鉴权，带数据面内存快照）
-		{pattern: "GET /api/healthz", stage: stageHealth, handler: s.handleHealth},
+		{pattern: "GET /api/healthz", mount: mountHealth, stage: stageHealth, handler: s.handleHealth},
 
 		// ② 认证入口（auth-mode 免鉴权；login/logout/me 仅 builtin，sso 下 404）
-		{pattern: "GET /api/auth-mode", stage: stageAuthEntry, handler: s.handleAuthMode},
-		{pattern: "POST /api/auth/login", stage: stageAuthEntry, builtinOnly: true, handler: s.handleLogin},
-		{pattern: "POST /api/auth/logout", stage: stageAuthEntry, builtinOnly: true, handler: s.handleLogout},
-		{pattern: "GET /api/auth/me", stage: stageAuthEntry, builtinOnly: true, handler: s.handleMe},
+		{pattern: "GET /api/auth-mode", mount: mountAuth, stage: stageAuthEntry, handler: s.handleAuthMode},
+		{pattern: "POST /api/auth/login", mount: mountAuth, stage: stageAuthEntry, builtinOnly: true, handler: s.handleLogin},
+		{pattern: "POST /api/auth/logout", mount: mountAuth, stage: stageAuthEntry, builtinOnly: true, handler: s.handleLogout},
+		{pattern: "GET /api/auth/me", mount: mountAuth, stage: stageAuthEntry, builtinOnly: true, handler: s.handleMe},
 
 		// ③ Clash 订阅（GET 免鉴权；POST 自带鉴权）
-		{pattern: "GET /api/clash/subscriptions/:token", stage: stageClash, handler: s.handleClashGet},
-		{pattern: "POST /api/clash/subscriptions", stage: stageClash, authRequired: true, handler: s.handleClashCreate},
+		{pattern: "GET /api/clash/subscriptions/:token", mount: mountClash, stage: stageClash, handler: s.handleClashGet},
+		{pattern: "POST /api/clash/subscriptions", mount: mountClash, stage: stageClash, authRequired: true, handler: s.handleClashCreate},
 
 		// ④ 业务 API（业务鉴权中间件之后）
-		{pattern: "GET /api/links", stage: stageAuthed, handler: s.handleLinksList},
-		{pattern: "POST /api/links", stage: stageAuthed, handler: s.handleLinksCreate},
-		{pattern: "POST /api/links/:id/revoke", stage: stageAuthed, handler: s.handleLinksRevoke},
-		{pattern: "DELETE /api/links/:id", stage: stageAuthed, handler: s.handleLinksDelete},
-		{pattern: "POST /api/links/:id/extend", stage: stageAuthed, handler: s.handleLinksExtend},
-		{pattern: "GET /api/links/:id/traffic", stage: stageAuthed, handler: s.handleLinkTraffic},
-		{pattern: "GET /api/links/:id/connections", stage: stageAuthed, handler: s.handleLinkConnections},
-		{pattern: "GET /api/audit", stage: stageAuthed, handler: s.handleAudit},
-		{pattern: "GET /api/regions/probes", stage: stageAuthed, handler: s.handleRegions},
+		{pattern: "GET /api/links", mount: mountLinks, stage: stageAuthed, handler: s.handleLinksList},
+		{pattern: "POST /api/links", mount: mountLinks, stage: stageAuthed, handler: s.handleLinksCreate},
+		{pattern: "POST /api/links/:id/revoke", mount: mountLinks, stage: stageAuthed, handler: s.handleLinksRevoke},
+		{pattern: "DELETE /api/links/:id", mount: mountLinks, stage: stageAuthed, handler: s.handleLinksDelete},
+		{pattern: "POST /api/links/:id/extend", mount: mountLinks, stage: stageAuthed, handler: s.handleLinksExtend},
+		{pattern: "GET /api/links/:id/traffic", mount: mountLinks, stage: stageAuthed, handler: s.handleLinkTraffic},
+		{pattern: "GET /api/links/:id/connections", mount: mountLinks, stage: stageAuthed, handler: s.handleLinkConnections},
+		{pattern: "GET /api/audit", mount: mountAudit, stage: stageAuthed, handler: s.handleAudit},
+		{pattern: "GET /api/regions/probes", mount: mountRegions, stage: stageAuthed, handler: s.handleRegions},
 	}
 	for i := range routes {
 		routes[i].method, routes[i].routePath = splitPattern(routes[i].pattern)

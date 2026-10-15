@@ -8,7 +8,8 @@
 //	404 兜底 → 500 统一错误处理。
 //
 // 关键派生行为（与旧实现一致）：未登录访问任意未知 /api/* 会先被业务鉴权拦成 401，只有已认证
-// 才会拿到 404 JSON；静态回退只对 GET/HEAD 生效，其余方法落 404。
+// 才会拿到 404 JSON；静态回退只对 GET/HEAD 生效，其余方法落 404；Express 对已注册路径的自动
+// OPTIONS 响应按挂载顺序复刻（见 serveOptions），请求体解析先于路由与 OPTIONS。
 package httpapi
 
 import (
@@ -213,6 +214,12 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		Request: r,
 	}
 
+	// ⓪ Express 对 OPTIONS 的自动响应（在业务路由之前统一处理，见 serveOptions）。
+	if r.Method == http.MethodOptions {
+		s.serveOptions(w, r, head, path)
+		return
+	}
+
 	// ① /api/healthz（免鉴权）
 	if route, params, ok := s.matchStage(stageHealth, method, path); ok {
 		ctx.Params = params
@@ -278,6 +285,84 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.write(w, r, head, Response{Status: http.StatusNotFound, ContentType: contentTypeHTML, RawBody: []byte("Not Found")})
+}
+
+// optionRouter 是 Express 里一个挂载了路由的 Router；OPTIONS 自动响应在其栈耗尽时汇总
+// 路径命中的路由方法，返回 Allow。authBefore 表示到达该 Router 前已过 /api 业务鉴权中间件。
+type optionRouter struct {
+	mount      string
+	authBefore bool
+}
+
+// optionRouters 按旧 app.ts 的挂载顺序列出所有 Router（业务鉴权中间件夹在 clash 与 links 之间）。
+func optionRouters() []optionRouter {
+	return []optionRouter{
+		{mount: mountHealth},
+		{mount: mountAuth},
+		{mount: mountClash},
+		{mount: mountLinks, authBefore: true},
+		{mount: mountAudit},
+		{mount: mountRegions},
+	}
+}
+
+// serveOptions 复刻 Express 对 OPTIONS 的自动响应：逐个 Router 汇总路径命中的路由方法，
+// 第一个有命中的 Router 直接 200 + Allow（正文即方法表）；否则按业务鉴权 / 404 兜底。
+func (s *Server) serveOptions(w http.ResponseWriter, r *http.Request, head bool, path string) {
+	authed := false
+	for _, or := range optionRouters() {
+		if or.authBefore && !authed {
+			authed = true
+			if isAPIPath(path) && s.authenticate(r) == "" {
+				s.write(w, r, head, unauthorizedJSON())
+				return
+			}
+		}
+		if allow := s.mountAllow(or.mount, path); allow != "" {
+			s.write(w, r, head, Response{
+				Status:      http.StatusOK,
+				ContentType: contentTypeHTML,
+				Headers:     map[string]string{"Allow": allow},
+				RawBody:     []byte(allow),
+			})
+			return
+		}
+	}
+	if strings.HasPrefix(path, "/api/") {
+		s.write(w, r, head, errorJSON(http.StatusNotFound, "接口不存在: "+r.Method+" "+path))
+		return
+	}
+	s.write(w, r, head, Response{Status: http.StatusNotFound, ContentType: contentTypeHTML, RawBody: []byte("Not Found")})
+}
+
+// mountAllow 汇总某 Router 下路径命中的路由方法；对齐 Express route._options()：GET 附带
+// HEAD，按注册顺序去重；无命中返回空串。
+func (s *Server) mountAllow(mount, path string) string {
+	var methods []string
+	for i := range s.routes {
+		rt := &s.routes[i]
+		if rt.mount != mount {
+			continue
+		}
+		if _, ok := matchRoutePath(rt.routePath, path); !ok {
+			continue
+		}
+		methods = appendMethod(methods, rt.method)
+		if rt.method == http.MethodGet {
+			methods = appendMethod(methods, http.MethodHead)
+		}
+	}
+	return strings.Join(methods, ",")
+}
+
+// appendMethod 去重追加（保持首次出现顺序，对齐 Express appendMethods）。
+func appendMethod(list []string, m string) []string {
+	for _, existing := range list {
+		if existing == m {
+			return list
+		}
+	}
+	return append(list, m)
 }
 
 // authenticate 返回当前身份；未认证为空串。
