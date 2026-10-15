@@ -2,8 +2,8 @@
 //
 // 为什么要自己实现：旧实现用 node:crypto 的 scryptSync，哈希格式为
 // `scrypt$<saltHex>$<hashHex>`（N=16384, r=8, p=1, keyLen=64）。为了让老库里的口令在
-// 新实现下仍可校验，必须用同一族参数；而工程约定只允许 modernc.org/sqlite 与
-// go-sql-driver/mysql 两个第三方依赖，故这里按 RFC 7914 自实现，零新增依赖。
+// 新实现下仍可校验，必须用同一族参数；而工程约定只允许
+// github.com/go-sql-driver/mysql 一个第三方依赖，故这里按 RFC 7914 自实现，零新增依赖。
 //
 // 实现范围刻意收窄到 Node scryptSync 的默认档（N 为 2 的幂、r/p 正整数）；不做通用参数
 // 校验的炫技，够用且可被 RFC 7914 测试向量验证（见 scrypt_test.go）。

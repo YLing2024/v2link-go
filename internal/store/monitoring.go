@@ -203,7 +203,7 @@ func (db *DB) InsertAudit(ctx context.Context, q Querier, in AuditInput) (int64,
 	if in.Detail != "" {
 		detail = in.Detail
 	}
-	return db.dialect.InsertReturningID(ctx, q,
+	return db.insertReturningID(ctx, q,
 		"INSERT INTO audit_log (ts, actor, action, link_id, detail) VALUES (?, ?, ?, ?, ?)",
 		in.TS, in.Actor, in.Action, in.LinkID, detail)
 }

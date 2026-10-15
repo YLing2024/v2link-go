@@ -1,14 +1,14 @@
 // Package config 负责 v2link-go 的环境变量解析与校验。
 //
 // 口径逐项对齐旧实现 server/src/config.ts：键名、默认值、取值域、非法 AUTH_MODE 回落
-// builtin、未知键忽略不报错。差异只有新增的数据库选择键（DB_DRIVER 等，见 docs/DB.md）。
+// builtin、未知键忽略不报错。差异只有存储：新版只支持 MySQL（DB_HOST/DB_PORT/DB_NAME/
+// DB_USER/DB_PASSWORD 或一条 DB_DSN，见 docs/DB.md）。
 // 本包只读环境变量，不碰任何文件；PUBLIC_HOST/PUBLIC_PATH/PUBLIC_SNI 与旧实现一样，
 // 不进入校验面板，直接按同名环境变量读取。
 package config
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 )
@@ -21,16 +21,6 @@ const (
 	AuthBuiltin AuthMode = "builtin"
 	// AuthSSO 关掉自带口令，身份只看 X-Auth-User。
 	AuthSSO AuthMode = "sso"
-)
-
-// DBDriver 数据库方言。
-type DBDriver string
-
-const (
-	// DBDriverSQLite 纯 Go SQLite（默认，零额外配置）。
-	DBDriverSQLite DBDriver = "sqlite"
-	// DBDriverMySQL 需 DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD 或一条 DB_DSN。
-	DBDriverMySQL DBDriver = "mysql"
 )
 
 // RegionProbe 地区连通性探测端点（key 唯一标识）。
@@ -77,9 +67,7 @@ type Config struct {
 	RegionProbesRaw       string
 	RegionProbeIntervalMs int
 
-	// 数据库选择与连接参数（本次新增；默认 sqlite，不受影响）。
-	DBDriver   DBDriver
-	DBPath     string
+	// MySQL 连接参数（新版只支持 MySQL）。
 	DBHost     string
 	DBPort     int
 	DBName     string
@@ -209,8 +197,6 @@ func Load(get func(string) string) (*Config, error) {
 		SampleRetentionMs:       sampleRetentionS * 1000,
 		RegionProbesRaw:         strings.TrimSpace(get("REGION_PROBES")),
 		RegionProbeIntervalMs:   regionProbeS * 1000,
-		DBDriver:                db.driver,
-		DBPath:                  db.path,
 		DBHost:                  db.host,
 		DBPort:                  db.port,
 		DBName:                  db.name,
@@ -232,8 +218,6 @@ func Load(get func(string) string) (*Config, error) {
 }
 
 type dbOptions struct {
-	driver   DBDriver
-	path     string
 	host     string
 	port     int
 	name     string
@@ -242,43 +226,28 @@ type dbOptions struct {
 	dsn      string
 }
 
-// loadDB 解析数据库选择。默认 sqlite；只有 DB_DRIVER=mysql 时才要求 MySQL 连接参数，
-// sqlite 分支完全不读取 MySQL 键（不加载驱动、不建连接）。
+// loadDB 解析 MySQL 连接参数。给了 DB_DSN 就整串生效；否则由分段字段拼装，
+// 其中 DB_HOST/DB_PORT 默认本机（127.0.0.1:3306），DB_NAME/DB_USER 必填。
 func loadDB(get func(string) string) (dbOptions, error) {
-	raw := strings.ToLower(strings.TrimSpace(get("DB_DRIVER")))
-	switch raw {
-	case "", "sqlite":
-		path := strings.TrimSpace(get("DB_PATH"))
-		if path == "" {
-			path = "./data/v2link.db"
-		}
-		return dbOptions{driver: DBDriverSQLite, path: path}, nil
-	case "mysql":
-		dsn := strings.TrimSpace(get("DB_DSN"))
-		if dsn != "" {
-			return dbOptions{driver: DBDriverMySQL, dsn: dsn}, nil
-		}
-		host := strings.TrimSpace(get("DB_HOST"))
-		name := strings.TrimSpace(get("DB_NAME"))
-		user := strings.TrimSpace(get("DB_USER"))
-		if host == "" || name == "" || user == "" {
-			return dbOptions{}, &ConfigError{Message: "DB_DRIVER=mysql 需要 DB_HOST/DB_NAME/DB_USER（或一条 DB_DSN）"}
-		}
-		port, err := pickInt(get("DB_PORT"), "DB_PORT", 3306, 1, 65535)
-		if err != nil {
-			return dbOptions{}, err
-		}
-		return dbOptions{
-			driver:   DBDriverMySQL,
-			host:     host,
-			port:     port,
-			name:     name,
-			user:     user,
-			password: get("DB_PASSWORD"),
-		}, nil
-	default:
-		return dbOptions{}, &ConfigError{Message: fmt.Sprintf("DB_DRIVER 只能是 sqlite / mysql，当前为「%s」", raw)}
+	if dsn := strings.TrimSpace(get("DB_DSN")); dsn != "" {
+		return dbOptions{dsn: dsn}, nil
 	}
+	name := strings.TrimSpace(get("DB_NAME"))
+	user := strings.TrimSpace(get("DB_USER"))
+	if name == "" || user == "" {
+		return dbOptions{}, &ConfigError{Message: "MySQL 需要 DB_HOST/DB_NAME/DB_USER（或一条 DB_DSN）"}
+	}
+	port, err := pickInt(get("DB_PORT"), "DB_PORT", 3306, 1, 65535)
+	if err != nil {
+		return dbOptions{}, err
+	}
+	return dbOptions{
+		host:     trimOr(get("DB_HOST"), "127.0.0.1"),
+		port:     port,
+		name:     name,
+		user:     user,
+		password: get("DB_PASSWORD"),
+	}, nil
 }
 
 // ParseDirectDomains 解析 CLASH_DIRECT_DOMAINS：逗号或空白分隔，去前导点、转小写、去重、保序。
@@ -335,10 +304,8 @@ func trimOr(raw, fallback string) string {
 
 // Describe 生成启动摘要（不含任何敏感值）。
 func (c *Config) Describe() string {
-	dbDesc := string(c.DBDriver)
-	if c.DBDriver == DBDriverSQLite {
-		dbDesc += " " + c.DBPath
-	} else if c.DBName != "" {
+	dbDesc := "mysql"
+	if c.DBName != "" {
 		dbDesc += " " + c.DBName
 	}
 	return strings.Join([]string{
@@ -348,6 +315,3 @@ func (c *Config) Describe() string {
 		fmt.Sprintf("xray api %s (tag=%s, 超时 %dms, 重试 %d)", c.XrayAPI, c.InboundTag, c.XrayTimeoutMs, c.XrayRetries),
 	}, " | ")
 }
-
-// EnvFileHint 仅用于明确 DB_PATH 相对路径的解析基准（相对进程工作目录）。
-func EnvFileHint() string { return strings.TrimSpace(os.Getenv("DB_PATH")) }

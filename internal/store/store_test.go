@@ -2,86 +2,234 @@ package store_test
 
 import (
 	"context"
-	"path/filepath"
+	"database/sql"
+	"os"
+	"strconv"
 	"testing"
 
-	"v2link-go/internal/sqlite"
 	"v2link-go/internal/store"
 )
 
-func openTestSQLite(t *testing.T) *store.DB {
+// testDSN 构造临时 MySQL 的 DSN：优先 TEST_DB_DSN，否则由 TEST_DB_* 分段拼装。
+// 未提供时跳过（无库环境下 make check 仍可全绿；有库时这些用例真跑在 MySQL 上）。
+func testDSN(t *testing.T) string {
 	t.Helper()
-	dsn := filepath.Join(t.TempDir(), "test.db")
-	db, err := store.Open(context.Background(), sqlite.New(), dsn, 4)
+	if dsn := os.Getenv("TEST_DB_DSN"); dsn != "" {
+		return dsn
+	}
+	name := os.Getenv("TEST_DB_NAME")
+	user := os.Getenv("TEST_DB_USER")
+	if name == "" || user == "" {
+		t.Skip("未设置 TEST_DB_DSN（或 TEST_DB_NAME/TEST_DB_USER），跳过 MySQL 集成测试")
+	}
+	host := os.Getenv("TEST_DB_HOST")
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port := 3306
+	if raw := os.Getenv("TEST_DB_PORT"); raw != "" {
+		p, err := strconv.Atoi(raw)
+		if err != nil {
+			t.Fatalf("TEST_DB_PORT 非法: %v", err)
+		}
+		port = p
+	}
+	return store.BuildDSN(host, port, name, user, os.Getenv("TEST_DB_PASSWORD"))
+}
+
+func openTestDB(t *testing.T) *store.DB {
+	t.Helper()
+	db, err := store.Open(context.Background(), testDSN(t), 4)
 	if err != nil {
-		t.Fatalf("打开 SQLite 失败: %v", err)
+		t.Fatalf("打开 MySQL 失败: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return db
 }
 
-func TestSQLiteMigrateAndColumnProbe(t *testing.T) {
-	ctx := context.Background()
-	db := openTestSQLite(t)
-
-	// 建表后每张表都可用（Migrate 幂等，重复跑不报错）。
-	if err := db.Dialect().Migrate(ctx, db.SQL); err != nil {
-		t.Fatalf("重复迁移失败: %v", err)
-	}
-	if err := db.Dialect().Migrate(ctx, db.SQL); err != nil {
-		t.Fatalf("再次重复迁移失败: %v", err)
-	}
-
-	// 列存在性探测（pragma_table_info 带参数绑定）。
-	for _, tc := range []struct {
-		table, col string
-		want       bool
-	}{
-		{"links", "alias", true},
-		{"links", "speed_mbps", false},
-		{"users", "created_at", true},
+// resetSchema 清空全部表，让每个用例从确定的空库起跑。
+func resetSchema(t *testing.T, db *store.DB) {
+	t.Helper()
+	for _, table := range []string{
+		"traffic_samples", "connections", "audit_log", "clash_subs",
+		"users", "sessions", "links", "schema_version",
 	} {
-		got, err := db.Dialect().ColumnExists(ctx, db.SQL, tc.table, tc.col)
-		if err != nil {
-			t.Fatalf("探测列 %s.%s 失败: %v", tc.table, tc.col, err)
-		}
-		if got != tc.want {
-			t.Errorf("列 %s.%s 存在性 = %v, 期望 %v", tc.table, tc.col, got, tc.want)
+		if _, err := db.SQL.Exec("DROP TABLE IF EXISTS " + table); err != nil {
+			t.Fatalf("清空表 %s 失败: %v", table, err)
 		}
 	}
 }
 
-func TestSQLiteInsertReturningAndUpsert(t *testing.T) {
+func TestMigrateBuildsSchemaAndIsIdempotent(t *testing.T) {
 	ctx := context.Background()
-	db := openTestSQLite(t)
+	db := openTestDB(t)
+	resetSchema(t, db)
 
-	// InsertReturningID 回填自增主键。
-	id, err := db.Dialect().InsertReturningID(ctx, db.SQL,
-		"INSERT INTO audit_log (ts, actor, action, link_id, detail) VALUES (?, ?, ?, ?, ?)",
-		1, "dev", "create", nil, nil)
+	if err := store.Migrate(ctx, db.SQL); err != nil {
+		t.Fatalf("空库建表失败: %v", err)
+	}
+	if err := store.Migrate(ctx, db.SQL); err != nil {
+		t.Fatalf("重复迁移失败: %v", err)
+	}
+
+	wantTables := map[string]bool{
+		"links": true, "traffic_samples": true, "connections": true,
+		"audit_log": true, "clash_subs": true, "users": true,
+		"sessions": true, "schema_version": true,
+	}
+	gotTables := queryStrings(t, db.SQL,
+		"SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()")
+	for name := range wantTables {
+		if !gotTables[name] {
+			t.Errorf("缺表 %s", name)
+		}
+	}
+	for name := range gotTables {
+		if !wantTables[name] {
+			t.Errorf("多出表 %s", name)
+		}
+	}
+
+	// 索引名与权威 schema 一致。
+	wantIndexes := []string{
+		"uq_links_email", "uq_links_uuid", "idx_links_expires", "idx_links_status",
+		"idx_samples_link_ts", "idx_conn_ts", "idx_conn_link_ts", "idx_audit_ts",
+		"idx_clash_subs_expires", "uq_users_username", "idx_sessions_expires",
+	}
+	gotIndexes := queryStrings(t, db.SQL,
+		"SELECT DISTINCT index_name FROM information_schema.statistics WHERE table_schema = DATABASE()")
+	for _, name := range wantIndexes {
+		if !gotIndexes[name] {
+			t.Errorf("缺索引 %s", name)
+		}
+	}
+
+	// links 列集合与权威 schema 一致。
+	wantLinkCols := map[string]bool{
+		"id": true, "uuid": true, "email": true, "note": true, "alias": true,
+		"up_bytes": true, "down_bytes": true, "created_at": true,
+		"expires_at": true, "revoked_at": true, "status": true,
+	}
+	gotLinkCols := queryStrings(t, db.SQL,
+		"SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'links'")
+	for name := range wantLinkCols {
+		if !gotLinkCols[name] {
+			t.Errorf("links 缺列 %s", name)
+		}
+	}
+	for name := range gotLinkCols {
+		if !wantLinkCols[name] {
+			t.Errorf("links 多出列 %s", name)
+		}
+	}
+}
+
+func TestMigrateAddsMissingColumnWithoutTouchingData(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	resetSchema(t, db)
+
+	// 造一个缺 alias 列的老 links 表并写入一行。
+	if _, err := db.SQL.Exec(`CREATE TABLE links (
+		id varchar(256) NOT NULL,
+		uuid varchar(256) NOT NULL,
+		email varchar(256) NOT NULL,
+		note longtext NOT NULL,
+		up_bytes bigint NOT NULL DEFAULT 0,
+		down_bytes bigint NOT NULL DEFAULT 0,
+		created_at bigint NOT NULL,
+		expires_at bigint NOT NULL,
+		revoked_at bigint DEFAULT NULL,
+		status varchar(256) NOT NULL DEFAULT 'active',
+		PRIMARY KEY (id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`); err != nil {
+		t.Fatalf("建老表失败: %v", err)
+	}
+	if _, err := db.SQL.Exec(
+		"INSERT INTO links (id, uuid, email, note, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+		"lk_legacy", "uuid-legacy", "legacy@example.com", "n", int64(1), int64(2)); err != nil {
+		t.Fatalf("写老表失败: %v", err)
+	}
+
+	if err := store.Migrate(ctx, db.SQL); err != nil {
+		t.Fatalf("补列迁移失败: %v", err)
+	}
+
+	cols := queryStrings(t, db.SQL,
+		"SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'links'")
+	if !cols["alias"] {
+		t.Fatalf("alias 列未被增量补上")
+	}
+
+	row, err := db.LinkByID(ctx, "lk_legacy")
 	if err != nil {
-		t.Fatalf("插入 audit_log 失败: %v", err)
+		t.Fatalf("读回老行失败: %v", err)
 	}
-	if id != 1 {
-		t.Fatalf("自增主键 = %d, 期望 1", id)
+	if row == nil || row.Email != "legacy@example.com" || row.Alias != "" {
+		t.Fatalf("老行数据未按预期保留: %+v", row)
+	}
+}
+
+func TestLinkInsertAndReadBack(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	resetSchema(t, db)
+	if err := store.Migrate(ctx, db.SQL); err != nil {
+		t.Fatalf("迁移失败: %v", err)
 	}
 
-	// Upsert 幂等：同键重复写不报错且更新值。
-	cols := store.CopyColumns("links")
-	upsert := db.Dialect().UpsertSQL("links", cols, store.KeyColumns("links"))
-	row := []any{"lk_test", "uuid-1", "lk_test", "n", "a", 0, 0, 100, 200, nil, "active"}
-	if _, err := db.SQL.ExecContext(ctx, upsert, row...); err != nil {
-		t.Fatalf("首次 upsert 失败: %v", err)
+	row := store.LinkRow{
+		ID: "lk_round", UUID: "uuid-round", Email: "round@example.com",
+		Note: "备注", Alias: "别名", UpBytes: 10, DownBytes: 20,
+		CreatedAt: 1000, ExpiresAt: 2000, Status: store.StatusActive,
 	}
-	row[5] = int64(42) // up_bytes
-	if _, err := db.SQL.ExecContext(ctx, upsert, row...); err != nil {
-		t.Fatalf("重复 upsert 失败: %v", err)
+	if err := db.InsertLink(ctx, db.SQL, row); err != nil {
+		t.Fatalf("写入链接失败: %v", err)
 	}
-	var up int64
-	if err := db.SQL.QueryRowContext(ctx, "SELECT up_bytes FROM links WHERE id = ?", "lk_test").Scan(&up); err != nil {
-		t.Fatalf("读回失败: %v", err)
+	got, err := db.LinkByID(ctx, "lk_round")
+	if err != nil {
+		t.Fatalf("读回链接失败: %v", err)
 	}
-	if up != 42 {
-		t.Fatalf("upsert 未更新: up_bytes = %d", up)
+	if got == nil || got.UUID != "uuid-round" || got.Note != "备注" || got.UpBytes != 10 {
+		t.Fatalf("读回不一致: %+v", got)
 	}
+}
+
+func TestInsertAuditReturnsID(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	resetSchema(t, db)
+	if err := store.Migrate(ctx, db.SQL); err != nil {
+		t.Fatalf("迁移失败: %v", err)
+	}
+
+	id, err := db.InsertAudit(ctx, db.SQL, store.AuditInput{TS: 1, Actor: "dev", Action: "create"})
+	if err != nil {
+		t.Fatalf("写审计失败: %v", err)
+	}
+	if id <= 0 {
+		t.Fatalf("自增主键未回填: %d", id)
+	}
+}
+
+// queryStrings 把单列查询结果收成集合。
+func queryStrings(t *testing.T, db *sql.DB, query string) map[string]bool {
+	t.Helper()
+	rows, err := db.Query(query)
+	if err != nil {
+		t.Fatalf("查询失败: %v", err)
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			t.Fatalf("扫描失败: %v", err)
+		}
+		out[s] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("遍历失败: %v", err)
+	}
+	return out
 }

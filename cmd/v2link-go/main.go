@@ -1,23 +1,23 @@
 // Command v2link-go 是临时 VLESS 链接管理控制面的 Go 重写版。
 //
-// 三种运行形态（对齐需求书 §5/§7）：
+// 两种运行形态（对齐需求书 §5/§7）：
 //
 //	v2link-go                  启动控制面（HTTP + 后台调度 + access log 采集）
 //	v2link-go --static-only    只托管嵌入的前端产物（本地预览用）
-//	v2link-go migrate-data …   跨库搬运（SQLite ⇄ MySQL），源库只读
+//
+// 存储只用 MySQL（DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD 或 DB_DSN）。
+// 旧 SQLite 数据的一次性搬运由独立工具 tools/migrate-sqlite-to-mysql/ 完成，不在本程序内。
 package main
 
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -30,11 +30,9 @@ import (
 	"v2link-go/internal/httpapi"
 	"v2link-go/internal/links"
 	"v2link-go/internal/monitor"
-	"v2link-go/internal/mysql"
 	"v2link-go/internal/reconcile"
 	"v2link-go/internal/regions"
 	"v2link-go/internal/scheduler"
-	"v2link-go/internal/sqlite"
 	"v2link-go/internal/store"
 	"v2link-go/internal/xray"
 )
@@ -49,9 +47,6 @@ func main() {
 // run 解析子命令并分派；get 便于测试注入环境变量。
 func run(args []string, get func(string) string) error {
 	logger := newLogger()
-	if len(args) > 0 && args[0] == "migrate-data" {
-		return runMigrateData(args[1:], logger)
-	}
 
 	staticOnly := false
 	for _, arg := range args {
@@ -61,7 +56,7 @@ func run(args []string, get func(string) string) error {
 		case "--static-only", "-static-only":
 			staticOnly = true
 		default:
-			return fmt.Errorf("未知参数 %q（可用：serve、--static-only、migrate-data）", arg)
+			return fmt.Errorf("未知参数 %q（可用：serve、--static-only）", arg)
 		}
 	}
 
@@ -78,14 +73,7 @@ func run(args []string, get func(string) string) error {
 // serve 起完整控制面：开库 → 装配各服务 → listen → 起后台任务 → 等退出信号。
 func serve(cfg *config.Config, logger *slog.Logger) error {
 	ctx := context.Background()
-	if err := ensureDataDir(cfg); err != nil {
-		return err
-	}
-	dialect, dsn, err := buildDialect(cfg)
-	if err != nil {
-		return err
-	}
-	db, err := store.Open(ctx, dialect, dsn, maxOpenConns(cfg.DBDriver))
+	db, err := store.Open(ctx, databaseDSN(cfg), maxOpenConns)
 	if err != nil {
 		return err
 	}
@@ -294,42 +282,15 @@ func resolveLinkID(ctx context.Context, db *store.DB, logger *slog.Logger, email
 	return &id
 }
 
-// ensureDataDir 只在 SQLite 文件形态下建父目录（MySQL 无本地文件）。
-func ensureDataDir(cfg *config.Config) error {
-	if cfg.DBDriver != config.DBDriverSQLite {
-		return nil
-	}
-	dir := filepath.Dir(cfg.DBPath)
-	if dir == "" || dir == "." {
-		return nil
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("创建数据目录失败: %w", err)
-	}
-	return nil
-}
+// maxOpenConns 是 MySQL 连接池上限（调度器与 HTTP 共用，取一个稳妥值）。
+const maxOpenConns = 16
 
-// buildDialect 依据配置选方言与 DSN：MySQL 未配置时根本不加载驱动、不建连接。
-func buildDialect(cfg *config.Config) (store.Dialect, string, error) {
-	switch cfg.DBDriver {
-	case config.DBDriverMySQL:
-		if cfg.DBDSN != "" {
-			return mysql.New(), cfg.DBDSN, nil
-		}
-		return mysql.New(), mysql.BuildDSN(cfg.DBHost, cfg.DBPort, cfg.DBName, cfg.DBUser, cfg.DBPassword), nil
-	case config.DBDriverSQLite:
-		return sqlite.New(), sqlite.DSN(cfg.DBPath), nil
-	default:
-		return nil, "", fmt.Errorf("不支持的 DB_DRIVER %q", cfg.DBDriver)
+// databaseDSN 优先用 DB_DSN；否则由分段参数拼 go-sql-driver DSN。口令只进返回值，不落日志。
+func databaseDSN(cfg *config.Config) string {
+	if cfg.DBDSN != "" {
+		return cfg.DBDSN
 	}
-}
-
-// maxOpenConns 给两种方言各设一个稳妥的连接池上限（SQLite 写锁敏感，池小些）。
-func maxOpenConns(driver config.DBDriver) int {
-	if driver == config.DBDriverMySQL {
-		return 16
-	}
-	return 4
+	return store.BuildDSN(cfg.DBHost, cfg.DBPort, cfg.DBName, cfg.DBUser, cfg.DBPassword)
 }
 
 // toSpecs 把配置层探测端点转成 regions 服务需要的形态。
@@ -367,99 +328,4 @@ func printGeneratedPassword(username, password string) {
 	fmt.Printf("    %s\n", password)
 	fmt.Println("该口令只显示这一次，之后不会再次打印。")
 	fmt.Println(line)
-}
-
-// runMigrateData 执行跨库搬运：--from / --to 用 `sqlite:` / `mysql:` 前缀选驱动。
-func runMigrateData(args []string, logger *slog.Logger) error {
-	fs := flag.NewFlagSet("migrate-data", flag.ContinueOnError)
-	from := fs.String("from", "", "源库 DSN，前缀 sqlite: 或 mysql:")
-	to := fs.String("to", "", "目标库 DSN，前缀 sqlite: 或 mysql:")
-	dryRun := fs.Bool("dry-run", false, "只统计与校验，不写目标库")
-	verify := fs.Bool("verify", false, "搬运后逐表比对条数与抽样行")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *from == "" || *to == "" {
-		return errors.New("migrate-data 需要 --from 与 --to")
-	}
-
-	srcDialect, srcDSN, err := parseMigrateDSN(*from)
-	if err != nil {
-		return fmt.Errorf("--from 无效: %w", err)
-	}
-	dstDialect, dstDSN, err := parseMigrateDSN(*to)
-	if err != nil {
-		return fmt.Errorf("--to 无效: %w", err)
-	}
-
-	ctx := context.Background()
-	// 源库用 OpenRaw：只连不迁移，保证只读。
-	src, err := store.OpenRaw(ctx, srcDialect, srcDSN, 4)
-	if err != nil {
-		return fmt.Errorf("打开源库失败: %w", err)
-	}
-	defer func() { _ = src.Close() }()
-	dst, err := store.Open(ctx, dstDialect, dstDSN, 4)
-	if err != nil {
-		return fmt.Errorf("打开目标库失败: %w", err)
-	}
-	defer func() { _ = dst.Close() }()
-
-	report, err := store.MigrateData(ctx, src, dst, store.MigrateOptions{DryRun: *dryRun, Verify: *verify})
-	if err != nil {
-		return err
-	}
-	printMigrateReport(report, *from, *to)
-	if *verify && !report.OK() {
-		return errors.New("抽样/条数比对未通过")
-	}
-	logger.Info("migrate-data 完成")
-	return nil
-}
-
-// parseMigrateDSN 解析 `sqlite:<path>` / `mysql:<go-sql-driver DSN>`，前缀决定方言。
-func parseMigrateDSN(raw string) (store.Dialect, string, error) {
-	switch {
-	case strings.HasPrefix(raw, "sqlite:"):
-		path := strings.TrimPrefix(raw, "sqlite:")
-		if strings.TrimSpace(path) == "" {
-			return nil, "", errors.New("sqlite DSN 需要文件路径，例如 sqlite:./data/v2link.db")
-		}
-		return sqlite.New(), sqlite.DSN(path), nil
-	case strings.HasPrefix(raw, "mysql:"):
-		dsn := strings.TrimPrefix(raw, "mysql:")
-		if strings.TrimSpace(dsn) == "" {
-			return nil, "", errors.New("mysql DSN 不能为空")
-		}
-		return mysql.New(), dsn, nil
-	default:
-		return nil, "", fmt.Errorf("无法识别的 DSN %q（需以 sqlite: 或 mysql: 开头）", raw)
-	}
-}
-
-// printMigrateReport 打印逐表搬运与校验结果（不含任何连接串/口令）。
-func printMigrateReport(report *store.MigrateReport, from, to string) {
-	mode := "搬运"
-	if report.DryRun {
-		mode = "演练（dry-run，不写目标库）"
-	}
-	fmt.Printf("migrate-data %s: %s → %s\n", mode, from, to)
-	var totalSrc, totalWritten int64
-	for _, t := range report.Tables {
-		totalSrc += t.Source
-		totalWritten += t.Written
-		line := fmt.Sprintf("  %-16s 源 %5d  写入 %5d", t.Table, t.Source, t.Written)
-		if report.Verify {
-			status := "OK"
-			if len(t.Mismatches) > 0 {
-				status = "不一致"
-			}
-			line += fmt.Sprintf("  抽样 %d  %s", t.SampleRows, status)
-		}
-		fmt.Println(line)
-		for _, m := range t.Mismatches {
-			fmt.Println("      - " + m)
-		}
-	}
-	fmt.Printf("  合计 源 %d 行，写入 %d 行\n", totalSrc, totalWritten)
 }
