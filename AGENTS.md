@@ -6,32 +6,35 @@
 ## 技术栈（固定）
 
 - HTTP：仅标准库 `net/http`；不引 Web 框架与路由库（分发顺序手写在 `internal/httpapi/api.go`）。
-- 数据库：`modernc.org/sqlite`（纯 Go、无 cgo）+ `github.com/go-sql-driver/mysql`；业务 SQL 全收在 `internal/store`。
+- 数据库：**仅 MySQL**，`github.com/go-sql-driver/mysql`；业务 SQL 与建表/增量迁移全收在 `internal/store`。
 - 配置：只读环境变量（不引 YAML / dotenv）。
 - 加密：`internal/scrypt` 纯标准库实现（N=16384,r=8,p=1，与旧实现参数一致）；不引 `x/crypto`。
 - 日志：标准库 `log/slog`。
 - 前端：`frontend/` 原样搬入；产物经根包 `//go:embed all:frontend/dist` 打进二进制。
 
-**允许的第三方依赖只有 `modernc.org/sqlite` 与 `github.com/go-sql-driver/mysql`**；新增依赖前先改本文件并说明。
+**服务模块允许的第三方依赖只有 `github.com/go-sql-driver/mysql`**（2026-10-16 口径：不再支持 SQLite）；
+新增依赖前先改本文件并说明。旧 SQLite 数据由独立工具 `tools/migrate-sqlite-to-mysql/` 搬运，
+该工具是独立 Go module、自带 `modernc.org/sqlite`，**不得被服务主程序 import**。
 
 ## 目录
 
-- `cmd/v2link-go/`：进程入口（装配 + 优雅退出 + `migrate-data`）。
-- `internal/store/`：账本层（SQL 与方言接口）。
-- `internal/sqlite/`、`internal/mysql/`：两套薄方言（DDL / upsert / 自增回填 / 列探测 / DSN）。
+- `cmd/v2link-go/`：进程入口（装配 + 优雅退出）。
+- `internal/store/`：账本层（SQL + MySQL 建表/增量迁移 + DSN）。
 - `internal/httpapi/`：HTTP 契约层（分发顺序、静态托管、各路由）。
 - `internal/{links,monitor,clash,reconcile,regions,auth,xray,ids,expiry,vless,httperr,jsonx}/`：业务与工具。
 - `tools/fake-xray/`：验收用假 xray（不参与生产）。
+- `tools/migrate-sqlite-to-mysql/`：一次性迁移工具（独立 module，不参与服务运行时）。
 - `deploy/`：systemd / env / nginx 样例（**只提交，不安装到 /etc**）。
 
 ## 三条硬约束（改动前必读）
 
-1. **HTTP 契约逐条对齐**：路径、方法、状态码、响应体形状（`{ok,data}` / `{ok:false,error}`、
+1. **HTTP 契约逐条对齐**：路径、方法、状态码、响应体形态（`{ok,data}` / `{ok:false,error}`、
    分页 `{rows,total,limit,offset}`、`/auth-mode`、`/api/healthz`、`/api/regions/probes`）、
    分发顺序（未登录访问未知 `/api/*` 先 401，已登录才 404 JSON）不得改。改了路由必须同步 `docs/API.md`。
 2. **账本 → xray 单向收敛**：账本为权威、xray 为镜像；**只读账本、绝不因 xray 失败改账本**；
    只走 `adu/rmu` 热管理，不 reload、不断存量连接；稳态无动作不打日志。
-3. **数据库迁移只做增量**：禁止 DROP / TRUNCATE / 重建表；两种方言下都要能通过同一套测试。
+3. **数据库迁移只做增量**：禁止 DROP / TRUNCATE / 重建表；DDL 逐列对齐 `docs/mysql-schema-cloud.md`
+   的云库 `v2link`，启动时只能 `CREATE TABLE IF NOT EXISTS` 与 `ALTER TABLE ADD COLUMN`。
 
 ## 红线
 
@@ -44,6 +47,8 @@
 ## 命令
 
 - `make build` / `make test` / `make race` / `make vet` / `make check`（机检路由文档 + vet + 单测）。
+- 单测只跑 MySQL：`internal/store` 用例读 `TEST_DB_DSN`（或 `TEST_DB_HOST/PORT/NAME/USER/PASSWORD`）；
+  未提供时跳过，`make check` 仍全绿。`make check` 只跑本服务模块（`./...`），不含 `tools/` 独立 module。
 - 依赖安装与前端命令一律带 `timeout`。
 
 ## 提交

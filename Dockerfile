@@ -21,6 +21,6 @@ RUN useradd --system --create-home --home-dir /var/lib/v2link-go v2link
 USER v2link
 WORKDIR /var/lib/v2link-go
 COPY --from=build /out/v2link-go /usr/local/bin/v2link-go
-ENV HOST=127.0.0.1 PORT=19245 DB_DRIVER=sqlite DB_PATH=/var/lib/v2link-go/v2link.db
+ENV HOST=127.0.0.1 PORT=19245
 EXPOSE 19245
 ENTRYPOINT ["/usr/local/bin/v2link-go"]

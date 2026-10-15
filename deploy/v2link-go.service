@@ -15,7 +15,7 @@ ExecStart=/usr/local/bin/v2link-go
 Restart=on-failure
 RestartSec=2
 
-# 最小权限：只允许写自己的数据目录（SQLite 账本）。
+# 最小权限：只允许写自己的工作目录（账本在 MySQL，进程本身无数据文件写入需求）。
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

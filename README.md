@@ -5,8 +5,9 @@
 
 - **控制面 / 数据面分离**：控制面（本服务）管账本与 HTTP；数据面 xray-core 走 `xray api adu/rmu` 热管理，
   不 reload、不断存量连接。
-- **单二进制**：前端产物经 `//go:embed` 打进二进制；无外部运行时依赖（SQLite 为纯 Go 实现，无需 cgo）。
-- **双库支持**：`DB_DRIVER=sqlite`（默认）或 `mysql`，配置切换；`migrate-data` 子命令做跨库拷贝。
+- **单二进制**：前端产物经 `//go:embed` 打进二进制；运行时不依赖外部语言运行时。
+- **仅 MySQL**：新版只支持 MySQL（`github.com/go-sql-driver/mysql`），没有 SQLite 依赖与 `DB_DRIVER` 开关；
+  旧 SQLite 数据用独立工具 `tools/migrate-sqlite-to-mysql/` 一次性搬运。
 
 ## 构建与运行
 
@@ -18,14 +19,13 @@ make check          # 聚合门禁：路由↔文档机检 + go vet + go test（
 
 make run            # 构建后直接运行（读环境变量）
 ./v2link-go --static-only            # 只托管嵌入的前端产物（本地预览）
-./v2link-go migrate-data --help      # 跨库搬运
 ```
 
 ## 配置（环境变量）
 
 配置**只读环境变量**（对齐旧实现的 systemd `EnvironmentFile` 部署口径），不读 YAML / `.env` 文件。
-键名与默认值逐条对齐旧实现（27 个键），唯一差异是新增 `DB_DRIVER` 等数据库选择键；
-默认端口由 `7897` 改为 `19245`。全部键见 `deploy/env.example`。
+旧实现的业务键名与默认值逐条对齐，新增的是数据库连接键（MySQL）与默认端口由 `7897` 改为 `19245`。
+全部键见 `deploy/env.example`。
 
 - 数据面：`XRAY_API`、`XRAY_BIN`、`XRAY_INBOUND_TAG`、`XRAY_API_TIMEOUT_S`、`XRAY_API_RETRIES`
 - 时限：`DEFAULT_HOURS`、`MAX_HOURS`
@@ -33,7 +33,7 @@ make run            # 构建后直接运行（读环境变量）
   `CONN_CLEANUP_INTERVAL_S`、`CONN_RETENTION_S`、`SAMPLE_CLEANUP_INTERVAL_S`、`SAMPLE_RETENTION_S`、
   `REGION_PROBE_INTERVAL_S`、`REGION_PROBES`
 - 采集：`ACCESS_LOG_PATH`
-- 数据库：`DB_DRIVER`、`DB_PATH`、`DB_HOST`、`DB_PORT`、`DB_NAME`、`DB_USER`、`DB_PASSWORD`、`DB_DSN`
+- 数据库：`DB_HOST`、`DB_PORT`、`DB_NAME`、`DB_USER`、`DB_PASSWORD`、`DB_DSN`（仅 MySQL）
 - Clash：`CLASH_SUB_TTL_S`、`PUBLIC_BASE_URL`、`CLASH_DIRECT_DOMAINS`
 - 认证：`AUTH_MODE`、`V2LINK_ADMIN_USER`、`V2LINK_ADMIN_PASSWORD`、`SESSION_TTL_HOURS`、`TRUST_PROXY`
 - 公开地址（生成 `vless://`）：`PUBLIC_HOST`、`PUBLIC_PATH`、`PUBLIC_SNI`
@@ -41,11 +41,10 @@ make run            # 构建后直接运行（读环境变量）
 ## 目录
 
 ```
-cmd/v2link-go/       进程入口（装配 / 优雅退出 / migrate-data）
+cmd/v2link-go/       进程入口（装配 / 优雅退出）
 internal/
   config/            环境变量解析
-  store/             账本访问层 + 跨库搬运
-  sqlite/ mysql/     两套薄方言（DDL / upsert / 自增回填 / 列探测）
+  store/             账本访问层 + MySQL 建表/增量迁移
   ids/ expiry/ vless/ id、UUID、有效期、vless URI
   xray/              xray api 客户端（os/exec，超时 + 退避重试）
   links/             链接业务编排（创建/吊销/延长/删除）
@@ -57,9 +56,10 @@ internal/
   httpapi/           HTTP 契约层（标准库 net/http）
 frontend/            前端源码（原样搬入；产物嵌入）
 tools/fake-xray/     验收用假 xray（不参与生产）
+tools/migrate-sqlite-to-mysql/  一次性迁移工具（独立 module，不参与服务运行时）
 deploy/              systemd / env / nginx 样例（不安装）
 docs/API.md          接口契约（权威，机检）
-docs/DB.md           双库映射与迁移
+docs/DB.md           MySQL 表结构与旧库迁移映射
 docs/COMPONENTS.md   前端组件登记
 docs/ACCEPTANCE.md    验收方法与真实结果
 ```
@@ -70,18 +70,18 @@ docs/ACCEPTANCE.md    验收方法与真实结果
 
 ## 数据库
 
-见 `docs/DB.md`。默认 SQLite；`DB_DRIVER=mysql` 需 `DB_HOST`/`DB_NAME`/`DB_USER`（或 `DB_DSN`）。
-迁移只做增量（禁止 DROP / TRUNCATE / 重建表），老库原地升级、数据保留。
+见 `docs/DB.md`。只支持 MySQL：给一条 `DB_DSN`，或 `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER`/`DB_PASSWORD`
+（`DB_NAME`/`DB_USER` 必填）。迁移只做增量（禁止 DROP / TRUNCATE / 重建表），老库原地升级、数据保留。
+旧 SQLite 数据用 `tools/migrate-sqlite-to-mysql/` 一次性搬入。
 
 ## 与旧实现的有意差异
 
 见交付报告；要点：
 
 1. 默认端口 `7897` → `19245`（新旧并存）。
-2. 新增数据库选择与 `migrate-data`（需求书 §3 要求）。
-3. `users`/`sessions` 时间列由 ISO 文本统一为 epoch 毫秒整数（读旧库时兼容）。
-4. 配置只读环境变量（不读 `.env` / YAML）。
-5. 前端目录沿用 `frontend/`（需求书 §5 用语；§7 目录清单里的 `web/` 与此冲突，以 §5 为准）。
+2. 存储由 SQLite 改为**仅 MySQL**，并提供独立迁移工具（需求书 §3）。
+3. 配置只读环境变量（不读 `.env` / YAML）。
+4. 前端目录沿用 `frontend/`（需求书 §5 用语；§7 目录清单里的 `web/` 与此冲突，以 §5 为准）。
 
 ## 许可
 

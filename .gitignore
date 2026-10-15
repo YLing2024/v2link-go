@@ -4,7 +4,7 @@
 /frontend/dist/
 *.tsbuildinfo
 
-# 运行时数据（SQLite 账本含真实 UUID/流量；.env 实值）
+# 运行时数据与本地配置（.env 实值）
 /data/
 .env
 .env.local
