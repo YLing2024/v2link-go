@@ -54,7 +54,30 @@
 - 未知 `/api/*` 路径先过业务鉴权：未认证 → `401 {"error":"未登录"}`；已认证 → `404 {"ok":false,"error":"接口不存在: <METHOD> <path>"}`。
   （与旧实现同源：Express 里 `/api` 业务鉴权中间件挂在业务路由之前。）
 - 非 `/api` 路径的未知路由（非 GET/HEAD）→ `404`，体为 `Not Found`（`text/html; charset=utf-8`）。
-- 请求体不是合法 JSON → `500 {"ok":false,"error":"<解析消息>"}`（旧实现走统一错误处理）。
+- 请求体不是合法 JSON → `500 {"ok":false,"error":"<解析消息>"}`，消息逐字取旧实现（`express.json` 的
+  strict 首字符校验 + V8 `JSON.parse` 原文），位置按 UTF-16 码元计、line/column 从 1 起：
+  - 空体按 `{}` 处理（不报错）；纯空白 → `Unexpected end of JSON input`。
+  - 首字符非 `{`/`[`（strict）→ `Unexpected token '<首字符>', "<原片段>" is not valid JSON`。
+  - 已进入解析 → 如 `Expected property name or '}' in JSON at position 1 (line 1 column 2)`。
+  - 请求体超过 `64kb` → `request entity too large`。
+  - 该解析先于路由与自动 OPTIONS 发生（与 `app.use(express.json())` 同序）。
+
+### 自动 OPTIONS 响应
+
+Express 对已注册路径自动响应 `OPTIONS`，本服务按挂载顺序逐条复刻：
+
+- 路径命中某个已注册路由器：`200`，`Allow` 响应头与正文一致（逗号分隔、无空格），
+  `Content-Type: text/html; charset=utf-8`。`GET` 路由会附带 `HEAD`（如 `/api/links` → `GET,HEAD,POST`）。
+- `/api/links*`、`/api/audit`、`/api/regions/*` 位于业务鉴权之后，未认证的 `OPTIONS` 同样
+  `401 {"error":"未登录"}`；已认证才返回 `Allow`。
+- 未命中任何已注册路径：`/api/*` → `404 {"ok":false,"error":"接口不存在: OPTIONS <path>"}`；
+  其余（含 `/api`、`/`、`/foo`）→ `404 Not Found`（`text/html; charset=utf-8`）。
+- 已核对的具体 `Allow`：`/api/healthz`、`/api/auth-mode`、`/api/auth/me`、`/api/audit`、
+  `/api/regions/probes`、`/api/links/:id/traffic`、`/api/links/:id/connections`、
+  `/api/clash/subscriptions/:token` → `GET,HEAD`；`/api/links` → `GET,HEAD,POST`；
+  `/api/links/:id` → `DELETE`；`/api/auth/login`、`/api/auth/logout`、`/api/links/:id/revoke`、
+  `/api/links/:id/extend`、`/api/clash/subscriptions` → `POST`。
+- 尾斜杠（`/api/links/`）与查询串（`/api/links?x=1`）不影响匹配结果。
 
 ---
 
@@ -314,7 +337,10 @@ expires_at = 0：永久哨兵，永不过期（过期扫描跳过）
 
 见仓库交付报告与 `docs/DB.md`。HTTP 契约层面已做到逐条对齐；已知近似点：
 
-- 请求体非法 JSON 的 500 `error` 文案与 Node `body-parser` 的原文不同（消息形态一致：`{"ok":false,"error":…}`）。
 - 查询串重复键只取首个值（近似 `qs` 的数组语义）；旧的业务字段都只读单值，行为一致。
+- 非规范方法名（小写 `options`、`get`，或未知方法 `FOO`、`OPTION` 等）在旧实现由 Node 的 llhttp
+  在 HTTP 解析层直接拒绝（`400`，无响应体）；Go `net/http` 接受任意方法 token，这类请求会继续
+  走进既有分发（`/api/*` 未认证即 `401`）。规范大写的 `OPTIONS` 行为已逐条对齐。已知方法
+  （`PUT`/`PATCH`/`DELETE`/`TRACE`/`PURGE` 等）两版一致。
 - 静态响应不带 Express 的 `ETag` / `Last-Modified`（缓存头 `Cache-Control` 与旧实现一致）。
 - 默认端口 `PORT` 由 7897 改为 19245（新旧并存，避免冲突）。
