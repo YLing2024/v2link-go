@@ -208,6 +208,15 @@ func (db *DB) InsertAudit(ctx context.Context, q Querier, in AuditInput) (int64,
 		in.TS, in.Actor, in.Action, in.LinkID, detail)
 }
 
+// DeleteAuditByLink 删除某链接的全部审计行（create 时 xray 失败的回滚路径），返回删除行数。
+func (db *DB) DeleteAuditByLink(ctx context.Context, q Querier, linkID string) (int64, error) {
+	res, err := q.ExecContext(ctx, "DELETE FROM audit_log WHERE link_id = ?", linkID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // ListAudit 分页读审计（新到旧）。
 func (db *DB) ListAudit(ctx context.Context, from, to *int64, limit, offset int) ([]AuditView, int64, error) {
 	parts := make([]string, 0, 2)

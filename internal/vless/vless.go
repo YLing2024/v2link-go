@@ -61,7 +61,7 @@ func BuildURI(p LinkParams) string {
 	}
 	uri := "vless://" + p.UUID + "@" + p.Host + ":" + itoa(port) + "?" + qs.String()
 	if alias := strings.TrimSpace(p.Alias); alias != "" {
-		uri += "#" + encodeURIComponent(alias)
+		uri += "#" + EncodeURIComponent(alias)
 	}
 	return uri
 }
@@ -152,8 +152,8 @@ func formURLEncode(s string) string {
 	return b.String()
 }
 
-// encodeURIComponent 复刻 JS encodeURIComponent：保留 A-Za-z0-9 与 -_.!~*'()，其余百分号编码。
-func encodeURIComponent(s string) string {
+// EncodeURIComponent 复刻 JS encodeURIComponent：保留 A-Za-z0-9 与 -_.!~*'()，其余百分号编码。
+func EncodeURIComponent(s string) string {
 	const hex = "0123456789ABCDEF"
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {
