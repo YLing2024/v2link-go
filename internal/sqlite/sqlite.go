@@ -187,6 +187,16 @@ func (d *Dialect) UpsertSQL(table string, columns, keyColumns []string) string {
 	return base + " ON CONFLICT(" + strings.Join(keyColumns, ", ") + ") DO UPDATE SET " + strings.Join(assignments, ", ")
 }
 
+// PrepareCopy 关闭本连接的 SQLite 外键强制。源库存在历史遗留的孤儿行（引用了已删除的父行），
+// 忠实拷贝要求这些行原样落到目标库，而不是被外键约束挡下或清洗。PRAGMA foreign_keys 是连接级
+// 开关且不能在事务内切换，故必须在固定连接上、于任何写事务之前执行。
+func (d *Dialect) PrepareCopy(ctx context.Context, q store.Querier) error {
+	if _, err := q.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
+		return fmt.Errorf("关闭 SQLite 外键强制失败: %w", err)
+	}
+	return nil
+}
+
 func contains(list []string, v string) bool {
 	for _, item := range list {
 		if item == v {

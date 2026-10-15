@@ -66,11 +66,28 @@ func (r *MigrateReport) OK() bool {
 // MigrateData 把源库逐表拷贝到目标库（拷贝不是清洗）：保留原始值，仅把旧库 ISO 文本时间列
 // 归一为 epoch 毫秒整数。按 CopyTables 顺序先父后子；每表单事务 upsert，天然幂等。
 // 源库只读（仅 SELECT）。
+//
+// 写入固定在同一条目标连接上：先调 Dialect.PrepareCopy 关掉该连接的外键强制，
+// 使源库既有的孤儿行被原样搬过去而非被清洗；随后各表的写事务都复用这条连接。
 func MigrateData(ctx context.Context, src, dst *DB, opts MigrateOptions) (*MigrateReport, error) {
 	if opts.SampleSize <= 0 {
 		opts.SampleSize = 5
 	}
 	report := &MigrateReport{DryRun: opts.DryRun, Verify: opts.Verify}
+
+	var conn *sql.Conn
+	if !opts.DryRun {
+		c, err := dst.SQL.Conn(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("获取目标库连接失败: %w", err)
+		}
+		defer c.Close()
+		if err := dst.dialect.PrepareCopy(ctx, c); err != nil {
+			return nil, err
+		}
+		conn = c
+	}
+
 	for _, table := range CopyTables {
 		cols := CopyColumns(table)
 		if len(cols) == 0 {
@@ -82,7 +99,7 @@ func MigrateData(ctx context.Context, src, dst *DB, opts MigrateOptions) (*Migra
 		}
 		tr := TableReport{Table: table, Source: int64(len(rows))}
 		if !opts.DryRun {
-			if err := writeTable(ctx, dst, table, cols, rows); err != nil {
+			if err := writeTable(ctx, conn, dst.dialect, table, cols, rows); err != nil {
 				return nil, err
 			}
 			tr.Written = int64(len(rows))
@@ -137,22 +154,29 @@ func normalizeRow(table string, cols []string, raw []any) []any {
 	return out
 }
 
-// writeTable 单表事务内 upsert 全部行。
-func writeTable(ctx context.Context, db *DB, table string, cols []string, rows [][]any) error {
+// writeTable 在固定连接上开单表事务，逐行 upsert（幂等）。连接的外键强制已由 PrepareCopy 关闭，
+// 因此孤儿行能原样落地。
+func writeTable(ctx context.Context, conn *sql.Conn, dialect Dialect, table string, cols []string, rows [][]any) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	stmt := db.dialect.UpsertSQL(table, cols, KeyColumns(table))
+	stmt := dialect.UpsertSQL(table, cols, KeyColumns(table))
 	placeholders := make([]any, len(cols))
-	return db.Tx(ctx, func(q Querier) error {
-		for _, row := range rows {
-			copy(placeholders, row)
-			if _, err := q.ExecContext(ctx, stmt, placeholders...); err != nil {
-				return fmt.Errorf("写入目标表 %s 失败: %w", table, err)
-			}
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("开启目标表 %s 事务失败: %w", table, err)
+	}
+	for _, row := range rows {
+		copy(placeholders, row)
+		if _, err := tx.ExecContext(ctx, stmt, placeholders...); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("写入目标表 %s 失败: %w", table, err)
 		}
-		return nil
-	})
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交目标表 %s 事务失败: %w", table, err)
+	}
+	return nil
 }
 
 // verifyTable 比对条数与抽样行；差异写进 tr.Mismatches。

@@ -208,6 +208,16 @@ func (d *Dialect) UpsertSQL(table string, columns, keyColumns []string) string {
 	return base + " ON DUPLICATE KEY UPDATE " + strings.Join(assignments, ", ")
 }
 
+// PrepareCopy 关闭本会话的外键检查。源库存在历史遗留的孤儿行（引用了已删除的父行），
+// 忠实拷贝要求这些行原样落到目标库，而不是被外键约束挡下或清洗。FOREIGN_KEY_CHECKS 是会话级
+// 开关，必须在与后续写事务相同的固定连接上、于事务之外设置。
+func (d *Dialect) PrepareCopy(ctx context.Context, q store.Querier) error {
+	if _, err := q.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS=0"); err != nil {
+		return fmt.Errorf("关闭 MySQL 外键检查失败: %w", err)
+	}
+	return nil
+}
+
 func contains(list []string, v string) bool {
 	for _, item := range list {
 		if item == v {

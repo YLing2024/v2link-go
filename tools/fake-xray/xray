@@ -41,6 +41,8 @@ case "$sub" in
       echo "failed to add user $email: user already exists"
       exit 0
     fi
+    # 留存片段副本，供验收断言 inbound tag / uuid / email（正式运行无此文件无影响）。
+    cp -f "$file" "$state/$email.frag.json" 2>/dev/null || true
     printf '%s 0 0\n' "$uuid" > "$state/$email.cont"
     echo "Added 1 user(s) to inbound"
     ;;

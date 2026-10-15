@@ -34,6 +34,10 @@ type Dialect interface {
 	InsertReturningID(ctx context.Context, q Querier, insertSQL string, args ...any) (int64, error)
 	// UpsertSQL 返回按主键冲突即更新的 INSERT 语句（供跨库搬运幂等写入）。
 	UpsertSQL(table string, columns, keyColumns []string) string
+	// PrepareCopy 在跨库搬运开始时把连接置为「忠实拷贝」模式：关掉外键强制，
+	// 使源库里既有的孤儿行（历史遗留：引用了已删除父行）被原样搬过去而非被清洗。
+	// 必须在事务之外、于固定连接上执行（SQLite 的 PRAGMA foreign_keys 在事务内无效）。
+	PrepareCopy(ctx context.Context, q Querier) error
 }
 
 // DB 是数据库句柄 + 方言。
