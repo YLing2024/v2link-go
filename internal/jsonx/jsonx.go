@@ -45,6 +45,21 @@ func Quote(s string) string {
 				b.WriteByte(hex[c&0x0f])
 				continue
 			}
+			// WTF-8 编码的孤立代理项（U+D800..U+DFFF，见 jsonx 内部 v8 报错复刻）：
+			// JSON.stringify 会把它转义为 \uXXXX，这里保持一致。
+			if c == 0xED && i+2 < len(s) {
+				b1, b2 := s[i+1], s[i+2]
+				if b1 >= 0xA0 && b1 <= 0xBF && b2 >= 0x80 && b2 <= 0xBF {
+					u := uint16(c&0x0F)<<12 | uint16(b1&0x3F)<<6 | uint16(b2&0x3F)
+					b.WriteString(`\u`)
+					b.WriteByte(hex[u>>12&0x0F])
+					b.WriteByte(hex[u>>8&0x0F])
+					b.WriteByte(hex[u>>4&0x0F])
+					b.WriteByte(hex[u&0x0F])
+					i += 2
+					continue
+				}
+			}
 			b.WriteByte(c)
 		}
 	}

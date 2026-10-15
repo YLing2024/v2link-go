@@ -586,24 +586,16 @@ func readJSONBody(r *http.Request) (map[string]json.RawMessage, error) {
 	if int64(len(data)) > maxBodyBytes {
 		return nil, errBodyTooLarge
 	}
-	if len(bytes.TrimSpace(data)) == 0 {
-		return empty, nil
+	// 解析口径逐条对齐 express.json：strict 首字符校验 → JSON.parse 的原始报错文案。
+	if msg, isErr := jsonx.BodyJSONError(string(data)); isErr {
+		return nil, bodyError(msg)
 	}
 	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(data, &obj); err == nil {
-		if obj == nil {
-			return empty, nil
-		}
+	if err := json.Unmarshal(data, &obj); err == nil && obj != nil {
 		return obj, nil
 	}
-	// 顶层数组：Express strict 模式接受，但字段访问一律 undefined；据此回落空对象。
-	var anyVal any
-	if err := json.Unmarshal(data, &anyVal); err == nil {
-		if _, isArray := anyVal.([]any); isArray {
-			return empty, nil
-		}
-	}
-	return nil, errBodyParse
+	// 顶层数组（strict 接受）与空体：字段访问一律 undefined，回落空对象。
+	return empty, nil
 }
 
 // isJSONContentType 复刻 body-parser 的类型判定：媒介类型为 application/json 或以 +json 结尾。
@@ -619,11 +611,10 @@ func isJSONContentType(header string) bool {
 	return strings.HasPrefix(media, "application/") && strings.HasSuffix(media, "+json")
 }
 
-// 请求体解析错误（文案不强求与 Node 完全一致，见 docs/API.md 的「有意差异」）。
+// 请求体解析错误：读取失败与超限用固定文案；非法 JSON 用 V8/body-parser 原文（见 jsonx）。
 var (
 	errBodyRead     = bodyError("读取请求体失败")
 	errBodyTooLarge = bodyError("request entity too large")
-	errBodyParse    = bodyError("请求体不是合法 JSON")
 )
 
 // bodyError 是请求体阶段错误（对外 500，与旧实现走统一错误处理一致）。
