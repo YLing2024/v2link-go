@@ -124,6 +124,40 @@ func TestMigrateBuildsSchemaAndIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestOpenSelfBuildsSchemaOnEmptyDB 走服务真实的启动路径（store.Open → Migrate）：
+// 清空全部表后重新 Open，应把整套表与索引自建出来，无需任何手工 DDL。
+func TestOpenSelfBuildsSchemaOnEmptyDB(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	resetSchema(t, db)
+	_ = db.Close()
+
+	fresh, err := store.Open(ctx, testDSN(t), 4)
+	if err != nil {
+		t.Fatalf("空库启动（store.Open）失败: %v", err)
+	}
+	t.Cleanup(func() { _ = fresh.Close() })
+
+	got := queryStrings(t, fresh.SQL,
+		"SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()")
+	for _, name := range []string{
+		"links", "traffic_samples", "connections", "audit_log",
+		"clash_subs", "users", "sessions", "schema_version",
+	} {
+		if !got[name] {
+			t.Errorf("启动后缺表 %s", name)
+		}
+	}
+	// schema_version 应已落版本记录。
+	var n int
+	if err := fresh.SQL.QueryRow("SELECT COUNT(*) FROM schema_version").Scan(&n); err != nil {
+		t.Fatalf("读 schema_version 失败: %v", err)
+	}
+	if n < 1 {
+		t.Errorf("schema_version 未记录版本：count=%d", n)
+	}
+}
+
 func TestMigrateAddsMissingColumnWithoutTouchingData(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)
