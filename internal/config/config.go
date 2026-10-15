@@ -111,7 +111,7 @@ func (e *ConfigError) Error() string { return e.Message }
 
 // Load 从环境变量解析配置。get 便于测试注入。
 func Load(get func(string) string) (*Config, error) {
-	port, err := pickInt(get("PORT"), "PORT", 7897, 1, 65535)
+	port, err := pickInt(get("PORT"), "PORT", 19245, 1, 65535)
 	if err != nil {
 		return nil, err
 	}
