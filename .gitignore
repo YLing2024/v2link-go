@@ -20,3 +20,6 @@
 
 # 验收临时产物
 /.acceptance/
+
+# 迁移工具的本地构建产物
+/tools/migrate-sqlite-to-mysql/migrate-sqlite-to-mysql
