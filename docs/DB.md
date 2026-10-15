@@ -83,6 +83,9 @@ v2link-go migrate-data --from sqlite:./data/v2link.db --to "mysql:user:pass@tcp(
 - 顺序：`links → traffic_samples → connections → audit_log → clash_subs → users → sessions`（先父后子）。
 - 每表单事务 upsert，天然幂等，可重复执行。
 - 源库**绝不删除、绝不清空、绝不改结构**（用 `store.OpenRaw` 打开，不跑迁移）。
+- 写入固定在同一条目标连接上，写前调用方言 `PrepareCopy` 关掉该连接的外键强制
+  （SQLite `PRAGMA foreign_keys=OFF` / MySQL `SET FOREIGN_KEY_CHECKS=0`）。现网源库存在历史
+  遗留的孤儿行（引用了已删除父行），忠实拷贝要求其原样落地而非被约束挡下或清洗。
 
 ## 6. 有意差异
 

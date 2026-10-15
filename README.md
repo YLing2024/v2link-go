@@ -61,6 +61,7 @@ deploy/              systemd / env / nginx 样例（不安装）
 docs/API.md          接口契约（权威，机检）
 docs/DB.md           双库映射与迁移
 docs/COMPONENTS.md   前端组件登记
+docs/ACCEPTANCE.md    验收方法与真实结果
 ```
 
 ## 接口契约

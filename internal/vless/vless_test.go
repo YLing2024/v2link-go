@@ -62,11 +62,11 @@ func TestDisplayAlias(t *testing.T) {
 // TestFormURLEncode 校验 application/x-www-form-urlencoded：保留 *-._、空格转 '+'、其余大写百分号。
 func TestFormURLEncode(t *testing.T) {
 	cases := map[string]string{
-		"/v2ws":        "%2Fv2ws",
-		"a b":          "a+b",
-		"a*b-c._d":     "a*b-c._d",
-		"中文":          "%E4%B8%AD%E6%96%87",
-		"a=b&c":        "a%3Db%26c",
+		"/v2ws":    "%2Fv2ws",
+		"a b":      "a+b",
+		"a*b-c._d": "a*b-c._d",
+		"中文":       "%E4%B8%AD%E6%96%87",
+		"a=b&c":    "a%3Db%26c",
 	}
 	for in, want := range cases {
 		if got := formURLEncode(in); got != want {
