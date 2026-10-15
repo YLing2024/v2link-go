@@ -174,32 +174,28 @@ func (l *loginLimiter) Clear(ip string) { delete(l.entries, ip) }
 
 // --- Cookie 写入 ---
 
-// SetSessionCookie 写会话 cookie：Path=/、HttpOnly、SameSite=Lax、按需 Secure，带 Max-Age 与 Expires。
-func SetSessionCookie(w http.ResponseWriter, token string, ttl time.Duration, secure bool) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     SessionCookie,
-		Value:    token,
-		Path:     "/",
-		MaxAge:   int(ttl / time.Second),
-		Expires:  time.Now().Add(ttl).UTC(),
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   secure,
-	})
+// SessionSetCookie 生成登录会话的 Set-Cookie 头值。
+//
+// 属性与顺序逐字对齐 Express `res.cookie(name, token, {path:'/', httpOnly, sameSite:'lax', secure, maxAge})`
+// （底层 cookie.serialize 的输出顺序：Max-Age; Path; Expires; HttpOnly; [Secure]; SameSite）。
+func SessionSetCookie(token string, ttl time.Duration, secure bool) string {
+	seconds := int64(ttl / time.Second)
+	expires := time.Now().Add(ttl).UTC().Format(http.TimeFormat)
+	header := SessionCookie + "=" + token +
+		"; Max-Age=" + strconv.FormatInt(seconds, 10) +
+		"; Path=/; Expires=" + expires +
+		"; HttpOnly"
+	if secure {
+		header += "; Secure"
+	}
+	return header + "; SameSite=Lax"
 }
 
-// ClearSessionCookie 清会话 cookie（与写入同属性，过期时刻置 0）。
-func ClearSessionCookie(w http.ResponseWriter, secure bool) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     SessionCookie,
-		Value:    "",
-		Path:     "/",
-		MaxAge:   -1,
-		Expires:  time.Unix(1, 0).UTC(),
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   secure,
-	})
+// SessionClearCookie 生成登出时清除会话 cookie 的 Set-Cookie 头值。
+//
+// 对齐 Express `res.clearCookie(name, {path:'/'})`：只带 Path 与 1970 过期时刻，不带 HttpOnly/SameSite。
+func SessionClearCookie() string {
+	return SessionCookie + "=; Path=/; Expires=" + time.Unix(0, 0).UTC().Format(http.TimeFormat)
 }
 
 // ClientIP 复刻 Express trust proxy 下的 req.ip：按信任范围决定是否采信 X-Forwarded-For。
