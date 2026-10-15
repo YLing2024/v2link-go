@@ -1,0 +1,329 @@
+/* ==========================================================================
+   v2link · 布局 glue
+   设计语言以 antd 5 默认为准（主色 / 圆角 / 系统字体栈均由 antd 令牌决定，
+   本文件不做任何自定义 token 映射）。
+   本文件只保留 antd 尚未覆盖的布局 glue（栅格 / 尺寸 / 间距 / 滚动容器）
+   与少数 antd 无对应件的 carve-out（自绘二维码、链接盒、图表空态）。
+   颜色一律取 antd CSS 变量（cssVar.key=v2link，变量块挂在 .v2link 上，见 main.tsx）。
+   不写任何字面色值、字体声明、字距或大小写变换。
+   ========================================================================== */
+
+/* ---------- 基础重置 ---------- */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+/* 首屏（React 挂载前）：用系统颜色跟随 color-scheme，避免闪白/闪黑 */
+body {
+  background: Canvas;
+  color: CanvasText;
+}
+
+/* body 挂 .v2link，换取 antd CSS 变量（与 index.html 的 class 对齐） */
+body.v2link {
+  min-height: 100vh;
+  background: var(--ant-color-bg-layout);
+  color: var(--ant-color-text);
+  font-family: var(--ant-font-family);
+  font-size: 14px;
+  line-height: 1.5715;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ---------- 滚动条：细发丝线，跟随主题 ---------- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ant-color-border) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--ant-color-border);
+  background-clip: content-box;
+  border: 3px solid transparent;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--ant-color-text-quaternary);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--ant-color-primary);
+}
+
+/* ---------- 等宽数字（antd 无对应件：id / 时间 / 流量数字） ---------- */
+.mono {
+  font-family: var(--ant-font-family-code);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 首屏加载 ---------- */
+.app-loading {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.app-loading-logo {
+  margin: 0 !important;
+}
+
+/* ---------- 应用外壳 / 顶栏 ---------- */
+div.app-shell {
+  min-height: 100vh;
+}
+
+header.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 64px;
+  line-height: normal;
+  padding: 0 24px;
+  background: var(--ant-color-bg-container);
+  border-bottom: 1px solid var(--ant-color-border-secondary);
+}
+
+.app-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.app-brand-sub {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.app-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.app-menu {
+  display: none;
+  align-items: center;
+  gap: 8px;
+}
+
+main.app-content {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 28px 24px 84px;
+}
+
+.app-banner {
+  margin-bottom: 16px;
+}
+
+.app-toolbar {
+  margin-bottom: 12px;
+}
+
+/* ---------- 仪表盘 antd Table：单元格副行 / 非活跃行 ---------- */
+.cell-sub {
+  display: block;
+  margin-top: 3px;
+  font-family: var(--ant-font-family-code);
+  font-size: 10.5px;
+  color: var(--ant-color-text-tertiary);
+}
+
+.row-dim {
+  color: var(--ant-color-text-tertiary);
+}
+
+.traffic-cell {
+  white-space: nowrap;
+}
+
+.down {
+  font-family: var(--ant-font-family-code);
+  font-size: 12px;
+  color: var(--ant-color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.up {
+  font-family: var(--ant-font-family-code);
+  font-size: 12px;
+  color: var(--ant-color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 二维码 / 链接（保留原 qrcode dataURL 渲染，仅外层容器） ---------- */
+.qr {
+  width: 220px;
+  height: 220px;
+  border: 1px solid var(--ant-color-border-secondary);
+  border-radius: var(--ant-border-radius);
+  background: var(--ant-color-white);
+}
+
+.qr-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ant-color-text-tertiary);
+  font-size: 12px;
+}
+
+.vless-uri {
+  max-width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--ant-color-border-secondary);
+  border-radius: var(--ant-border-radius);
+  background: var(--ant-color-fill-tertiary);
+  color: var(--ant-color-text-secondary);
+  font-family: var(--ant-font-family-code);
+  font-size: 11px;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+/* ---------- 登录页 ---------- */
+.login-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.login-card {
+  width: 300px;
+  text-align: center;
+}
+
+.login-logo {
+  margin: 0 0 4px !important;
+}
+
+.login-form {
+  margin-top: 22px;
+  text-align: left;
+}
+
+.login-error {
+  margin-bottom: 16px;
+}
+
+/* ---------- 流量曲线（ECharts：容器尺寸，颜色由组件从主题变量读取） ---------- */
+.traffic-chart {
+  position: relative;
+  padding: 12px 14px 8px;
+  border: 1px solid var(--ant-color-border-secondary);
+  border-radius: var(--ant-border-radius);
+  background: var(--ant-color-bg-container);
+}
+
+.traffic-chart-canvas {
+  width: 100%;
+  height: 220px;
+}
+
+.chart-peak {
+  position: absolute;
+  right: 16px;
+  bottom: 12px;
+  font-family: var(--ant-font-family-code);
+  font-size: 10.5px;
+  color: var(--ant-color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-empty {
+  padding: 22px;
+  border: 1px dashed var(--ant-color-border);
+  border-radius: var(--ant-border-radius);
+  background: transparent;
+  text-align: center;
+  color: var(--ant-color-text-tertiary);
+  font-size: 12px;
+}
+
+/* ---------- 底部地区连通性（视觉由 antd Tag / Tooltip 承担，此处仅容器布局） ---------- */
+.regionbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 24px;
+  background: color-mix(in srgb, var(--ant-color-bg-layout) 92%, transparent);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid var(--ant-color-border-secondary);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.regionbar-title {
+  font-size: 12px;
+}
+
+.regionbar-ts {
+  margin-left: auto;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 响应式：窄屏把操作收进抽屉 ---------- */
+@media (max-width: 767px) {
+  header.app-header {
+    padding: 0 12px;
+  }
+
+  .app-actions {
+    display: none;
+  }
+
+  .app-menu {
+    display: inline-flex;
+  }
+
+  main.app-content {
+    padding: 16px 12px 96px;
+  }
+
+  .regionbar {
+    gap: 8px;
+    padding: 7px 12px;
+  }
+
+  .regionbar-ts {
+    margin-left: 0;
+  }
+}

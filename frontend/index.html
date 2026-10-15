@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>v2link</title>
+    <script>
+      // 首屏防闪白：在读框架前按 localStorage + 系统偏好给 <html> 打 data-theme。
+      // 键、取值、回退规则与 src/theme.ts 保持一致。
+      ;(function () {
+        var mode = 'auto'
+        try {
+          var saved = window.localStorage.getItem('theme_mode')
+          if (saved === 'light' || saved === 'dark' || saved === 'auto') mode = saved
+        } catch (e) {
+          mode = 'auto'
+        }
+        var dark = mode === 'dark'
+        if (mode === 'auto') {
+          try {
+            dark = window.matchMedia('(prefers-color-scheme: dark)').matches
+          } catch (e) {
+            dark = false
+          }
+        }
+        var theme = dark ? 'dark' : 'light'
+        var root = document.documentElement
+        root.setAttribute('data-theme', theme)
+        root.style.colorScheme = theme
+        var meta = document.querySelector('meta[name="color-scheme"]')
+        if (meta) meta.setAttribute('content', theme)
+      })()
+    </script>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%231677ff'/%3E%3Crect x='26' y='26' width='12' height='12' fill='%23ffffff' transform='rotate(45 32 32)'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body class="v2link">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

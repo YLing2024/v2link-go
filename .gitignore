@@ -1,5 +1,5 @@
 # 构建产物与依赖
-v2link-go
+/v2link-go
 /frontend/node_modules/
 /frontend/dist/
 *.tsbuildinfo
