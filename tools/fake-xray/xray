@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+#
+# 假 xray（验收专用）：模拟 `xray api adu/rmu/statsquery` 的 stdout 契约，并把每次调用
+# 原样追加到日志，用于断言控制面真的发起了正确的热管理调用。绝不接触生产 xray。
+#
+# 环境变量：
+#   FAKE_XRAY_LOG    调用日志路径（默认 /tmp/fake-xray.log），每行一次完整 argv。
+#   FAKE_XRAY_STATE  用户状态目录（默认 /tmp/fake-xray-state），每个用户一个 .cont 文件，
+#                    内容为 "<uuid> <up> <down>"。
+#   FAKE_XRAY_FAIL   "1" 时 adu/rmu 一律非零退出（模拟 xray 不可用，验证账本不变 + 下轮重试）。
+#
+# 用法（作为控制面的 XRAY_BIN）：
+#   FAKE_XRAY_LOG=... FAKE_XRAY_STATE=... XRAY_BIN=/path/to/xray v2link-go
+set -euo pipefail
+
+log="${FAKE_XRAY_LOG:-/tmp/fake-xray.log}"
+state="${FAKE_XRAY_STATE:-/tmp/fake-xray-state}"
+fail="${FAKE_XRAY_FAIL:-0}"
+mkdir -p "$state"
+
+# argv: api <sub> -s=<addr> [rest...]
+printf '%s\n' "$*" >> "$log"
+sub="${2:-}"
+
+if [ "$fail" = "1" ]; then
+  echo "fake-xray: upstream unavailable" >&2
+  exit 1
+fi
+
+case "$sub" in
+  adu)
+    # $4 = 临时 user.json 路径
+    file="${4:-}"
+    email=$(sed -n 's/.*"email":"\([^"]*\)".*/\1/p' "$file" | head -1)
+    uuid=$(sed -n 's/.*"id":"\([^"]*\)".*/\1/p' "$file" | head -1)
+    if [ -z "$email" ]; then
+      echo "failed to add user: no email in fragment" >&2
+      exit 1
+    fi
+    if [ -f "$state/$email.cont" ]; then
+      echo "failed to add user $email: user already exists"
+      exit 0
+    fi
+    printf '%s 0 0\n' "$uuid" > "$state/$email.cont"
+    echo "Added 1 user(s) to inbound"
+    ;;
+  rmu)
+    # $4 = -tag=..., $5 = email
+    email="${5:-}"
+    if [ -f "$state/$email.cont" ]; then
+      rm -f "$state/$email.cont"
+      echo "Removed 1 user(s)"
+    else
+      echo "Removed 0 user(s)"
+    fi
+    ;;
+  statsquery)
+    reset=0
+    for a in "$@"; do [ "$a" = "-reset" ] && reset=1; done
+    sep=""
+    printf '{"stat":['
+    for f in "$state"/*.cont; do
+      [ -e "$f" ] || continue
+      email=$(basename "$f" .cont)
+      read -r uuid up down < "$f"
+      if [ "${up:-0}" -gt 0 ]; then
+        printf '%s{"name":"user>>>%s>>>traffic>>>uplink","value":%s}' "$sep" "$email" "$up"
+        sep=","
+      fi
+      if [ "${down:-0}" -gt 0 ]; then
+        printf '%s{"name":"user>>>%s>>>traffic>>>downlink","value":%s}' "$sep" "$email" "$down"
+        sep=","
+      fi
+      if [ "$reset" = "1" ]; then
+        printf '%s 0 0\n' "$uuid" > "$f"
+      fi
+    done
+    printf ']}\n'
+    ;;
+  *)
+    echo "fake-xray: unknown subcommand '$sub'" >&2
+    exit 1
+    ;;
+esac
