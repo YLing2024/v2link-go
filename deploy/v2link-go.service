@@ -1,0 +1,26 @@
+[Unit]
+Description=v2link-go 控制面（临时 VLESS 链接管理，Go 重写版）
+Documentation=file:///opt/v2link-go/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=v2link
+Group=v2link
+# 真实值写在 /etc/v2link-go/env（不入库）；本文件只是样例，不安装到 /etc。
+EnvironmentFile=-/etc/v2link-go/env
+WorkingDirectory=/var/lib/v2link-go
+ExecStart=/usr/local/bin/v2link-go
+Restart=on-failure
+RestartSec=2
+
+# 最小权限：只允许写自己的数据目录（SQLite 账本）。
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/v2link-go
+
+[Install]
+WantedBy=multi-user.target
