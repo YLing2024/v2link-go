@@ -42,6 +42,15 @@ type EChartsOption = echarts.ComposeOption<
   | DataZoomComponentOption
 >
 
+// 与 style.css 的响应式命中条件一致：窄屏或触摸设备。
+const COARSE_QUERY = '(max-width: 991px), (pointer: coarse)'
+
+// 轴标签字号：桌面维持 10px（保持桌面观感），窄屏 / 触摸提到 12px（可见文本 ≥12px）。
+function axisFontSize(): number {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return 10
+  return window.matchMedia(COARSE_QUERY).matches ? 12 : 10
+}
+
 interface ThemeColors {
   text?: string
   sub?: string
@@ -70,7 +79,7 @@ function tickLabel(ts: number): string {
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:00`
 }
 
-function buildOption(points: TrafficPoint[], c: ThemeColors): EChartsOption {
+function buildOption(points: TrafficPoint[], c: ThemeColors, labelSize: number): EChartsOption {
   const hasUp = points.some((p) => p.up > 0)
   const bytes = (value: unknown) => formatBytes(Number(value))
   return {
@@ -90,12 +99,12 @@ function buildOption(points: TrafficPoint[], c: ThemeColors): EChartsOption {
       data: points.map((p) => tickLabel(p.ts)),
       axisTick: { show: false },
       axisLine: { lineStyle: { color: c.grid } },
-      axisLabel: { color: c.sub, fontSize: 10, hideOverlap: true },
+      axisLabel: { color: c.sub, fontSize: labelSize, hideOverlap: true },
     },
     yAxis: {
       type: 'value',
       splitLine: { lineStyle: { color: c.grid } },
-      axisLabel: { color: c.sub, fontSize: 10, formatter: (v: number) => formatBytes(v) },
+      axisLabel: { color: c.sub, fontSize: labelSize, formatter: (v: number) => formatBytes(v) },
     },
     dataZoom: [{ type: 'inside' }],
     series: [
@@ -156,12 +165,17 @@ export default function TrafficChart({ points }: { points: TrafficPoint[] }) {
     }
   }, [])
 
-  // 数据或主题变化时重设 option（颜色重新从 CSS 变量读取）
+  // 数据或主题变化时重设 option（颜色重新从 CSS 变量读取）；窄屏/触摸断点变化时同步轴标签字号
   useEffect(() => {
     const chart = chartRef.current
     const el = ref.current
     if (!chart || !el) return
-    chart.setOption(buildOption(points, readColors(el)), true)
+    const apply = () => chart.setOption(buildOption(points, readColors(el), axisFontSize()), true)
+    apply()
+    const mql =
+      typeof window.matchMedia === 'function' ? window.matchMedia(COARSE_QUERY) : null
+    mql?.addEventListener('change', apply)
+    return () => mql?.removeEventListener('change', apply)
   }, [points, resolved])
 
   return (
