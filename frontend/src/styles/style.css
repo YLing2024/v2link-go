@@ -220,7 +220,9 @@ main.app-content {
 }
 
 .login-card {
-  width: 300px;
+  /* 桌面居中时 resolve 为 300px；极窄屏退化为可用宽度，避免横向溢出 */
+  width: 100%;
+  max-width: 300px;
   text-align: center;
 }
 
@@ -325,5 +327,91 @@ main.app-content {
 
   .regionbar-ts {
     margin-left: 0;
+  }
+}
+
+/* ==========================================================================
+   窄屏 / 触摸适配
+   命中条件：视口 ≤991px，或 pointer: coarse（触摸设备）。
+   ≥992px 且精细指针不进入本段，桌面排版、字号、间距逐像素不变。
+   ========================================================================== */
+@media (max-width: 991px), (pointer: coarse) {
+  /* --- 字号：消除 <12px 可见文本（次要说明 12px） --- */
+  .mono {
+    font-size: 12px;
+  }
+
+  .cell-sub {
+    font-size: 12px;
+  }
+
+  .vless-uri {
+    font-size: 12px;
+  }
+
+  .chart-peak {
+    font-size: 12px;
+  }
+
+  /* --- 触摸目标：主要操作按钮 ≥44px --- */
+  .ant-btn {
+    min-height: 44px;
+  }
+
+  .ant-btn-icon-only {
+    min-width: 44px;
+  }
+
+  /* 弹窗 / 抽屉关闭按钮：命中区 ≥32×32 */
+  .ant-modal-close,
+  .ant-drawer-close {
+    min-width: 32px;
+    min-height: 32px;
+  }
+
+  /* --- 表单控件 ≥44px 高（避免 iOS 聚焦缩放） --- */
+  .ant-input,
+  .ant-input-affix-wrapper,
+  .ant-input-number,
+  .ant-picker,
+  .ant-select .ant-select-selector {
+    min-height: 44px;
+  }
+
+  /* 带前后缀的输入框：内部 input 填满外层，避免叠加加高 */
+  .ant-input-affix-wrapper > .ant-input {
+    min-height: 0;
+  }
+
+  /* 口令可见性图标：命中区 ≥32×32 */
+  .ant-input-password-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 32px;
+    min-height: 32px;
+  }
+
+  /* --- 相邻触摸目标间距 ≥8px：antd Space 的间距是内联样式，需 !important 覆盖 --- */
+  .touch-gap {
+    column-gap: 8px !important;
+    row-gap: 8px !important;
+  }
+
+  /* --- 主题三态分段控件：单项命中区加高 --- */
+  .ant-segmented {
+    min-height: 44px;
+  }
+
+  .ant-segmented-item-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+  }
+
+  /* --- 多选框：命中区加高 --- */
+  .ant-checkbox-wrapper {
+    min-height: 44px;
   }
 }
