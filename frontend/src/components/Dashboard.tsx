@@ -214,7 +214,7 @@ export default function Dashboard() {
         const active = l.status === 'active'
         const isBusy = busy === l.id
         return (
-          <Space size={4}>
+          <Space size={4} className="touch-gap" wrap={false}>
             <Button
               autoInsertSpace={false}
               type="link"

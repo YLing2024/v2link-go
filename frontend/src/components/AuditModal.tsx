@@ -9,6 +9,7 @@ import Modal from './Modal'
 // 入口放 Dashboard 顶部栏「审计」。
 // 本轮改 antd：Modal/Table/Tag/Typography/Button/Alert/Space。字段与顺序（时间/操作人/动作/链接/详情）不变；
 // 动作标签用 antd Tag 预设色（语义与原 audit-* 一致）；分页沿用原文案与按钮顺序。
+// 表格加 scroll.x：窄屏可横向滚动，避免右侧列（详情）被裁切。
 
 const ACTION_LABEL: Record<AuditRecord['action'], string> = {
   create: '生成',
@@ -105,9 +106,10 @@ export function AuditModal({ onClose }: { onClose: () => void }) {
             columns={columns}
             dataSource={rows}
             pagination={false}
+            scroll={{ x: 'max-content' }}
             sticky
           />
-          <Space size={6} wrap style={{ marginTop: 12 }}>
+          <Space size={6} wrap className="touch-gap" style={{ marginTop: 12 }}>
             <Button
               autoInsertSpace={false}
               size="small"

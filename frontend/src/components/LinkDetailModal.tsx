@@ -10,7 +10,8 @@ import TrafficChart from './TrafficChart'
 //   顶部「流量趋势」：近 24h / 近 7d / 近 30d 三个快捷档（bucket 随之 hour/day）
 //   底部「连接记录」：时间/目标域名/端口/用户搜索，分页
 // 数据量大走接口分页；曲线量小一次拉完。
-// 本轮改 antd：Modal/Button/Space/Input/Table/Typography/Empty。表格加 sticky 表头（无操作列，故不设 fixed/scroll.x）；
+// 本轮改 antd：Modal/Button/Space/Input/Table/Typography/Empty。表格加 sticky 表头；
+// 表格加 scroll.x：窄屏可横向滚动，避免右侧列（用户）被裁切。
 // 分页沿用原「N 条 · 第 x/y 页」文案与按钮顺序（不换成 antd Pagination，避免改文案）。
 
 type Range = { label: string; hours: number; bucket: 'hour' | 'day' }
@@ -156,7 +157,7 @@ export function LinkDetailModal({
             style={{ width: '100%', justifyContent: 'space-between', marginBottom: 10 }}
           >
             <Typography.Text strong>连接记录</Typography.Text>
-            <Space size={6} wrap>
+            <Space size={6} wrap className="touch-gap">
               <Input
                 size="small"
                 style={{ width: 200 }}
@@ -213,9 +214,10 @@ export function LinkDetailModal({
                 columns={columns}
                 dataSource={conns}
                 pagination={false}
+                scroll={{ x: 'max-content' }}
                 sticky
               />
-              <Space size={6} wrap style={{ marginTop: 12 }}>
+              <Space size={6} wrap className="touch-gap" style={{ marginTop: 12 }}>
                 <Button
                   autoInsertSpace={false}
                   size="small"
