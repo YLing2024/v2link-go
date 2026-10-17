@@ -172,8 +172,7 @@ export default function TrafficChart({ points }: { points: TrafficPoint[] }) {
     if (!chart || !el) return
     const apply = () => chart.setOption(buildOption(points, readColors(el), axisFontSize()), true)
     apply()
-    const mql =
-      typeof window.matchMedia === 'function' ? window.matchMedia(COARSE_QUERY) : null
+    const mql = typeof window.matchMedia === 'function' ? window.matchMedia(COARSE_QUERY) : null
     mql?.addEventListener('change', apply)
     return () => mql?.removeEventListener('change', apply)
   }, [points, resolved])
