@@ -281,6 +281,10 @@ export default function Dashboard() {
     <Layout className="app-shell">
       <Layout.Header className="app-header">
         <div className="app-brand">
+          <svg width="24" height="24" viewBox="0 0 512 512" aria-hidden="true" style={{ marginRight: 8 }}>
+            <rect x="128" y="196" width="150" height="120" rx="60" fill="none" stroke="currentColor" strokeWidth="28" transform="rotate(-20 203 256)" />
+            <rect x="234" y="196" width="150" height="120" rx="60" fill="none" stroke="#0E7490" strokeWidth="28" transform="rotate(-20 309 256)" />
+          </svg>
           <Typography.Text strong className="app-brand-name">
             v2link
           </Typography.Text>

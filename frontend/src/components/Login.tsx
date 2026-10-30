@@ -49,6 +49,7 @@ export default function Login({ onSuccess }: { onSuccess: (name: string) => void
     <div className="login-screen">
       <div className="login-card">
         <Typography.Title level={3} className="login-logo">
+          <svg width="26" height="26" viewBox="0 0 512 512" aria-hidden="true" style={{ marginRight: 8, verticalAlign: '-4px' }}><rect x="128" y="196" width="150" height="120" rx="60" fill="none" stroke="currentColor" strokeWidth="28" transform="rotate(-20 203 256)"/><rect x="234" y="196" width="150" height="120" rx="60" fill="none" stroke="#0E7490" strokeWidth="28" transform="rotate(-20 309 256)"/></svg>
           v2link
         </Typography.Title>
         <Typography.Text type="secondary">临时 VLESS 链接</Typography.Text>
